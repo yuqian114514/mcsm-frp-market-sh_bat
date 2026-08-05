@@ -111,64 +111,101 @@ function EnsureToken {
   $challenge = Get-PkceChallenge $verifier
   $state     = [guid]::NewGuid().ToString('N')
 
-  # 先自动找空闲端口 (11451-11460), 再拼 authUrl, 保证端口一致
-  $listener = $null
-  $port = 11451
-  while ($port -le 11460) {
-    try {
-      $listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, $port)
-      $listener.Start()
-      break
-    } catch {
-      $port++
-    }
+  # ---- 选择授权方式 ----
+  # 云服务器/远程桌面里, 回调会跳到"用户自己电脑"的 127.0.0.1, 服务器收不到
+  # 所以给出选择: 本机自动收回调 / 手动粘贴回调 URL
+  Write-Host ''
+  Write-Host '================ 授权方式 ================'
+  Write-Host '  1) 本机运行 (自动打开浏览器并接收回调)'
+  Write-Host '  2) 云服务器/远程 (手动把浏览器地址栏 URL 粘贴回来)'
+  Write-Host '========================================='
+  $mode = Read-Host '请选择授权方式 [默认 1]'
+  if ([string]::IsNullOrWhiteSpace($mode)) { $mode = '1' }
+
+  if ($mode -eq '2') {
+    # ---- 云服务器: 手动粘贴回调 URL ----
+    $RedirectUri = 'http://127.0.0.1:11451/callback'
+    $authUrl = "https://dash.lolia.link/oauth/authorize?response_type=code" +
+               "&client_id=" + $LoliaClientId +
+               "&redirect_uri=" + [uri]::EscapeDataString($RedirectUri) +
+               "&scope=" + [uri]::EscapeDataString($LoliaScope) +
+               "&state=" + $state +
+               "&code_challenge=" + $challenge +
+               "&code_challenge_method=S256"
+
+    Write-Host ''
+    Write-Host '请在【你自己电脑】的浏览器中打开以下链接完成授权:' -ForegroundColor Yellow
+    Write-Host "  $authUrl" -ForegroundColor Cyan
+    Write-Host ''
+    Write-Host '授权后浏览器会跳到 http://127.0.0.1:11451/callback?... 这个打不开的页面 (正常现象)' -ForegroundColor Yellow
+    Write-Host '请把浏览器【地址栏里的完整 URL】整段复制, 粘贴到这里:' -ForegroundColor Yellow
+    $callbackUrl = Read-Host '回调 URL'
+
+    $code = $null; $gotState = $null
+    if ($callbackUrl -match 'code=([^&\s]+)')  { $code = $Matches[1] }
+    if ($callbackUrl -match 'state=([^&\s]+)') { $gotState = $Matches[1] }
   }
-  if (-not $listener) { Err '无法找到可用端口 (11451-11460 均被占用)'; exit 1 }
-
-  $RedirectPort = $port
-  $RedirectUri  = "http://127.0.0.1:$RedirectPort/callback"
-
-  # authUrl 必须在端口确定后拼接, redirect_uri 用同一个 $RedirectUri
-  $authUrl = "https://dash.lolia.link/oauth/authorize?response_type=code" +
-             "&client_id=" + $LoliaClientId +
-             "&redirect_uri=" + [uri]::EscapeDataString($RedirectUri) +
-             "&scope=" + [uri]::EscapeDataString($LoliaScope) +
-             "&state=" + $state +
-             "&code_challenge=" + $challenge +
-             "&code_challenge_method=S256"
-
-  Info "已在 $RedirectUri 等待授权回调..."
-  Write-Host ""
-  Write-Host "请在浏览器中打开以下链接完成授权:" -ForegroundColor Yellow
-  Write-Host "  $authUrl" -ForegroundColor Cyan
-  Write-Host ""
-  Write-Host "授权完成后, 浏览器会跳转到 $RedirectUri 显示授权成功喵页面" -ForegroundColor Yellow
-  Write-Host "如果跳转失败（页面打不开）, 请检查 $RedirectUri 是否被占用" -ForegroundColor Yellow
-  Write-Host ""
-
-  $code = $null; $gotState = $null
-  try {
-    $client = $listener.AcceptTcpClient(); $stream = $client.GetStream()
-    $sb = New-Object System.Text.StringBuilder; $buf = New-Object byte[] 1
-    while ($true) {
-      if ($stream.Read($buf,0,1) -le 0) { break }
-      $ch = [char]$buf[0]
-      if ($ch -eq "`n") { break }
-      if ($ch -ne "`r") { [void]$sb.Append($ch) }
-      if ($sb.Length -gt 8192) { break }
+  else {
+    # ---- 本机: 自动选端口 + 监听回调 ----
+    $listener = $null
+    $port = 11451
+    while ($port -le 11460) {
+      try {
+        $listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, $port)
+        $listener.Start()
+        break
+      } catch {
+        $port++
+      }
     }
-    $line = $sb.ToString()
-    if ($line -match 'code=([^&\s]+)')  { $code = $Matches[1] }
-    if ($line -match 'state=([^&\s]+)') { $gotState = $Matches[1] }
-    $html = "<!doctype html><meta charset='utf-8'><h2>授权成功喵</h2><p>可以关闭本页返回终端了。</p>"
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes($html)
-    $resp = "HTTP/1.1 200 OK`r`nContent-Type: text/html; charset=utf-8`r`nContent-Length: $($bytes.Length)`r`nConnection: close`r`n`r`n"
-    $rb = [System.Text.Encoding]::ASCII.GetBytes($resp)
-    $stream.Write($rb,0,$rb.Length); $stream.Write($bytes,0,$bytes.Length); $stream.Flush()
-    $stream.Close(); $client.Close()
-  } finally { $listener.Stop() }
+    if (-not $listener) { Err '无法找到可用端口 (11451-11460 均被占用)'; exit 1 }
 
-  if ([string]::IsNullOrEmpty($code)) { Err '未获取到授权 code'; exit 1 }
+    $RedirectPort = $port
+    $RedirectUri  = "http://127.0.0.1:$RedirectPort/callback"
+
+    $authUrl = "https://dash.lolia.link/oauth/authorize?response_type=code" +
+               "&client_id=" + $LoliaClientId +
+               "&redirect_uri=" + [uri]::EscapeDataString($RedirectUri) +
+               "&scope=" + [uri]::EscapeDataString($LoliaScope) +
+               "&state=" + $state +
+               "&code_challenge=" + $challenge +
+               "&code_challenge_method=S256"
+
+    Info "已在 $RedirectUri 等待授权回调..."
+    Write-Host ""
+    Write-Host "请在浏览器中打开以下链接完成授权:" -ForegroundColor Yellow
+    Write-Host "  $authUrl" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "授权完成后, 浏览器会跳转到 $RedirectUri 显示授权成功喵页面" -ForegroundColor Yellow
+    Write-Host "如果跳转失败（页面打不开）, 请检查 $RedirectUri 是否被占用" -ForegroundColor Yellow
+    Write-Host ""
+
+    try { Start-Process $authUrl } catch { }
+
+    $code = $null; $gotState = $null
+    try {
+      $client = $listener.AcceptTcpClient(); $stream = $client.GetStream()
+      $sb = New-Object System.Text.StringBuilder; $buf = New-Object byte[] 1
+      while ($true) {
+        if ($stream.Read($buf,0,1) -le 0) { break }
+        $ch = [char]$buf[0]
+        if ($ch -eq "`n") { break }
+        if ($ch -ne "`r") { [void]$sb.Append($ch) }
+        if ($sb.Length -gt 8192) { break }
+      }
+      $line = $sb.ToString()
+      if ($line -match 'code=([^&\s]+)')  { $code = $Matches[1] }
+      if ($line -match 'state=([^&\s]+)') { $gotState = $Matches[1] }
+      $html = "<!doctype html><meta charset='utf-8'><h2>授权成功喵</h2><p>可以关闭本页返回终端了。</p>"
+      $bytes = [System.Text.Encoding]::UTF8.GetBytes($html)
+      $resp = "HTTP/1.1 200 OK`r`nContent-Type: text/html; charset=utf-8`r`nContent-Length: $($bytes.Length)`r`nConnection: close`r`n`r`n"
+      $rb = [System.Text.Encoding]::ASCII.GetBytes($resp)
+      $stream.Write($rb,0,$rb.Length); $stream.Write($bytes,0,$bytes.Length); $stream.Flush()
+      $stream.Close(); $client.Close()
+    } finally { $listener.Stop() }
+  }
+
+  if ([string]::IsNullOrEmpty($code)) { Err '未获取到授权 code (请确认粘贴了完整 URL)'; exit 1 }
   if ($gotState -ne $state) { Err 'state 不匹配, 已中止'; exit 1 }
 
   Info '正在用 code 换取 access_token...'
