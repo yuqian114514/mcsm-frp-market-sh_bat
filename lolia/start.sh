@@ -224,7 +224,7 @@ download_with_fallback() {
   local mirror3="$GITHUB_MIRROR3/https://github.com/$gh_path"
 
   info "尝试从 GitHub 下载: $primary"
-  if curl -fL --connect-timeout 15 --retry 2 -o "$out" "$primary"; then ok "GitHub 下载成功"; return 0; fi
+  if curl -fL -m 15 --retry 2 -o "$out" "$primary"; then ok "GitHub 下载成功"; return 0; fi
   warn "GitHub 下载失败，切换镜像站"
   info "镜像站下载: $mirror"
   if curl -fL --connect-timeout 20 --retry 2 -o "$out" "$mirror"; then ok "镜像站下载成功"; return 0; fi
