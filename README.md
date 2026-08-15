@@ -13,3 +13,5 @@ This repository is a command-line launcher customized for templates in the MCSM 
 · [LoliaFRP](https://github.com/Lolia-FRP/))
 
  （ps :你也可以不用mcsm来运行这些脚本   qwq）
+ 
+# 注意: mefrp 程序未完工 已废弃 可根据MIT许可证改造
