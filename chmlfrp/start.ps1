@@ -154,8 +154,8 @@ function EnsureToken {
     Write-Host '  1) 本机运行 (自动打开浏览器并接收回调)'
     Write-Host '  2) 云服务器/远程 (手动把浏览器地址栏 URL 粘贴回来)'
     Write-Host '========================================='
-    $mode = Read-Host '请选择授权方式 [默认 1]'
-    if ([string]::IsNullOrWhiteSpace($mode)) { $mode = '1' }
+    $mode = Read-Host '请选择授权方式 [默认 2]'
+    if ([string]::IsNullOrWhiteSpace($mode)) { $mode = '2' }
 
     if ($mode -eq '2') {
         $RedirectUri = 'http://127.0.0.1:47902/callback'
