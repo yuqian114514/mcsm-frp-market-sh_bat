@@ -223,8 +223,8 @@ ensure_token() {
     echo "  1) 本机运行 (自动打开浏览器并接收回调)" >&2
     echo "  2) 云服务器/远程 (手动把浏览器地址栏 URL 粘贴回来)" >&2
     echo "==========================================" >&2
-    read -p "请选择授权方式 [默认 1]: " mode
-    mode=${mode:-1}
+    read -p "请选择授权方式 [默认 2]: " mode
+    mode=${mode:-2}
 
     local redirect_uri="http://127.0.0.1:${REDIRECT_PORT}/callback"
     local auth_url="${CHML_AUTHORIZE}?response_type=code&client_id=${CHML_CLIENT_ID}&redirect_uri=$(url_encode "$redirect_uri")&scope=$(url_encode "$CHML_SCOPE")&state=${state}&nonce=${nonce}&code_challenge=${challenge}&code_challenge_method=S256"
@@ -355,6 +355,7 @@ get_frpc_bin() {
     echo "${FRP_DIR}/frpc"
 }
 
+
 install_frp() {
     local tag=$1
     local asset="ChmlFrp-${tag}_${PLATFORM}.tar.gz"
@@ -364,7 +365,7 @@ install_frp() {
     info "下载 frp $tag ($asset)"
     info "下载地址: $download_url"
 
-    if ! curl -L -o "$tmp" "$download_url" --connect-timeout 60 2>&1 | grep -v "^  " >&2; then
+    if ! curl -L -o "$tmp" "$download_url" --connect-timeout 60 --max-time 120; then
         err "下载失败"
         return 1
     fi
@@ -375,14 +376,21 @@ install_frp() {
     rm -rf "$extract"
     mkdir -p "$extract"
 
-    tar -xzf "$tmp" -C "$extract" 2>&1 | grep -v "^x " >&2
-    local found=$(find "$extract" -type f \( -name "frpc" -o -name "chmlfrp" \) | head -n 1)
-
-    if [ -z "$found" ]; then
-        err "压缩包内未找到 frpc"
+    if ! tar -xzf "$tmp" -C "$extract" 2>&1 | head -n 5 >&2; then
+        err "解压失败"
         return 1
     fi
 
+    local found=$(find "$extract" -type f \( -name "frpc" -o -name "chmlfrp" \) 2>/dev/null | head -n 1)
+
+    if [ -z "$found" ]; then
+        err "压缩包内未找到 frpc"
+        warn "压缩包内容:"
+        ls -la "$extract" >&2
+        return 1
+    fi
+
+    info "找到 frpc: $found"
     cp "$found" "$(get_frpc_bin)"
     chmod +x "$(get_frpc_bin)"
     rm -f "$tmp"
